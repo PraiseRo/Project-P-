@@ -1,0 +1,27 @@
+{
+  "setup my workspace": {
+    "description": "Opens VS Code, Chrome, and prepares development environment",
+    "spoken_response": "Setting up your workspace now, Praise. Opening VS Code and Chrome.",
+    "actions": [
+      {"tool": "open_application", "args": {"application_name": "vscode"}},
+      {"tool": "open_application", "args": {"application_name": "chrome"}},
+      {"tool": "get_system_info", "args": {}}
+    ]
+  },
+  "study mode": {
+    "description": "Opens YouTube for relaxing background beats and Notepad for notes",
+    "spoken_response": "Activating study mode. Opening relaxing music and Notepad.",
+    "actions": [
+      {"tool": "open_application", "args": {"application_name": "notepad"}},
+      {"tool": "search_web", "args": {"query": "relaxing lofi beats", "engine": "youtube"}}
+    ]
+  },
+  "close workspace": {
+    "description": "Closes workspace applications",
+    "spoken_response": "Closing your workspace applications.",
+    "actions": [
+      {"tool": "close_application", "args": {"application_name": "notepad"}},
+      {"tool": "close_application", "args": {"application_name": "vscode"}}
+    ]
+  }
+}

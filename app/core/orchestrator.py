@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any
 from app.core.events import AssistantState, event_bus
 from app.core.logging_config import setup_logger
 from app.core.conversation import ConversationManager
+from app.core.routines import routine_manager
 from app.ai.provider import AIProvider, SYSTEM_PROMPT
 from app.ai.hybrid_router import LocalIntentRouter
 from app.voice.speech_to_text import SpeechToTextProvider
@@ -99,22 +100,26 @@ class AssistantOrchestrator:
             self.set_state(AssistantState.IDLE)
 
     async def process_text_command(self, user_text: str):
-        """Processes a text command via Fast Offline Local Routing or Online LLM Reasoning."""
+        """Processes a text command via Fast Offline Local Routing, Custom Routines, or Online LLM."""
         self.set_state(AssistantState.THINKING)
         self.conversation.add_user_message(user_text)
 
-        # 1. FAST LOCAL OFFLINE ROUTING: Check if this is a direct PC action
+        # 1. FAST LOCAL OFFLINE ROUTING & ROUTINES
         local_match = LocalIntentRouter.match_local_command(user_text)
         if local_match:
             tool_name, args, spoken_preamble = local_match
-            logger.info(f"Fast Local Offline Execution: {tool_name} with {args}")
             self.set_state(AssistantState.EXECUTING)
 
-            try:
-                result = await tool_registry.execute(tool_name, args)
-                resp_text = result.get("message", spoken_preamble)
-            except Exception as err:
-                resp_text = f"Failed to execute {tool_name}: {str(err)}"
+            if tool_name == "execute_routine":
+                logger.info("Executing custom multi-step routine...")
+                resp_text = await routine_manager.execute_routine(args["routine"])
+            else:
+                logger.info(f"Fast Local Offline Execution: {tool_name} with {args}")
+                try:
+                    result = await tool_registry.execute(tool_name, args)
+                    resp_text = result.get("message", spoken_preamble)
+                except Exception as err:
+                    resp_text = f"Failed to execute {tool_name}: {str(err)}"
 
             if not self._emergency_stop_requested:
                 self.set_state(AssistantState.SPEAKING)
@@ -130,7 +135,7 @@ class AssistantOrchestrator:
             response = await self.ai.chat(messages=self.conversation.get_messages(), tools=tools)
         except Exception as e:
             logger.error(f"AI Provider error (may be offline): {e}")
-            resp_text = "I couldn't reach the online AI service. You can still use local PC commands like opening apps or checking system stats."
+            resp_text = "I couldn't reach the online AI service. You can still use local PC commands or routines like 'setup my workspace'."
             self.set_state(AssistantState.SPEAKING)
             event_bus.publish("assistant_message", resp_text)
             await self.tts.speak(resp_text)
