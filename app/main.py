@@ -29,10 +29,11 @@ def main():
     worker_thread = threading.Thread(target=run_async_worker, args=(async_loop,), daemon=True)
     worker_thread.start()
 
-    # 2. Initialize Core Components
+    # 2. Initialize Core Components (Free zero-data Gemini / Web brain support)
     ai_provider = get_ai_provider(
         provider_name=settings.ai_provider,
         api_key=settings.openai_api_key,
+        gemini_key=settings.gemini_api_key,
         model=settings.ai_model
     )
     stt_provider = get_stt_provider(
