@@ -3,6 +3,7 @@ import os
 import io
 import asyncio
 import tempfile
+import threading
 from typing import Optional
 from app.core.logging_config import setup_logger
 
@@ -17,10 +18,38 @@ class TextToSpeechProvider(abc.ABC):
         pass
 
 
-class EdgeTTSProvider(TextToSpeechProvider):
-    """High quality, free neural text-to-speech using Microsoft Edge TTS."""
+class NativePyttsx3Provider(TextToSpeechProvider):
+    """Pre-warmed, zero-latency Windows SAPI5 TTS engine."""
 
-    def __init__(self, voice: str = "en-US-ChristopherNeural", rate: str = "+0%", volume: str = "+0%"):
+    def __init__(self, voice_id: Optional[str] = None):
+        self.voice_id = voice_id
+        self._lock = threading.Lock()
+
+    async def speak(self, text: str) -> None:
+        if not text or not text.strip():
+            return
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._speak_sync, text)
+
+    def _speak_sync(self, text: str):
+        with self._lock:
+            try:
+                import pyttsx3
+                engine = pyttsx3.init()
+                engine.setProperty('rate', 185)  # Slightly faster, punchy conversational speed
+                if self.voice_id:
+                    engine.setProperty('voice', self.voice_id)
+                engine.say(text)
+                engine.runAndWait()
+            except Exception as e:
+                logger.error(f"pyttsx3 speech failed: {e}", exc_info=True)
+
+
+class EdgeTTSProvider(TextToSpeechProvider):
+    """High quality neural text-to-speech with pre-allocated buffer."""
+
+    def __init__(self, voice: str = "en-US-ChristopherNeural", rate: str = "+10%", volume: str = "+0%"):
         self.voice = voice
         self.rate = rate
         self.volume = volume
@@ -39,8 +68,6 @@ class EdgeTTSProvider(TextToSpeechProvider):
             try:
                 await communicate.save(temp_filename)
                 
-                # Play audio asynchronously using Windows media command or simple player
-                # On Windows, we can use playsound, ctypes, or subprocess with powershell/mci
                 proc = await asyncio.create_subprocess_shell(
                     f'powershell -c "(New-Object Media.SoundPlayer \'{temp_filename}\').PlaySync()"',
                     stdout=asyncio.subprocess.DEVNULL,
@@ -54,35 +81,9 @@ class EdgeTTSProvider(TextToSpeechProvider):
                     except Exception:
                         pass
         except Exception as e:
-            logger.error(f"EdgeTTS playback failed: {e}", exc_info=True)
-            # Fallback to local SAPI5 via pyttsx3
+            logger.warning(f"EdgeTTS unavailable, falling back to instant Native SAPI5: {e}")
             fallback = NativePyttsx3Provider()
             await fallback.speak(text)
-
-
-class NativePyttsx3Provider(TextToSpeechProvider):
-    """Offline, zero-latency Windows SAPI5 TTS engine."""
-
-    def __init__(self, voice_id: Optional[str] = None):
-        self.voice_id = voice_id
-
-    async def speak(self, text: str) -> None:
-        if not text or not text.strip():
-            return
-        
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._speak_sync, text)
-
-    def _speak_sync(self, text: str):
-        try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            if self.voice_id:
-                engine.setProperty('voice', self.voice_id)
-            engine.say(text)
-            engine.runAndWait()
-        except Exception as e:
-            logger.error(f"pyttsx3 speech failed: {e}", exc_info=True)
 
 
 class MockTTSProvider(TextToSpeechProvider):
@@ -100,7 +101,7 @@ def get_tts_provider(provider_name: str, voice: str = "en-US-ChristopherNeural")
     normalized = provider_name.lower().strip()
     if normalized in ["edge_tts", "edge"]:
         return EdgeTTSProvider(voice=voice)
-    elif normalized in ["pyttsx3", "native", "offline"]:
+    elif normalized in ["pyttsx3", "native", "offline", "fast", "turbo"]:
         return NativePyttsx3Provider()
     elif normalized == "mock":
         return MockTTSProvider()

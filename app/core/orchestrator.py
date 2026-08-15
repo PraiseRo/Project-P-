@@ -16,7 +16,7 @@ from app.security.policies import SecurityPolicy
 logger = setup_logger("assistant.orchestrator")
 
 class AssistantOrchestrator:
-    """Master orchestrator with Hybrid (Offline PC Control + Online Web Intelligence) Routing."""
+    """Master orchestrator with Turbo Parallel Execution and Zero-Lag Audio Dispatch."""
 
     def __init__(
         self,
@@ -45,7 +45,6 @@ class AssistantOrchestrator:
 
     def set_state(self, new_state: AssistantState):
         self.state = new_state
-        logger.info(f"State transitioned to: {new_state.value}")
         event_bus.publish("state_change", new_state)
 
     def trigger_emergency_stop(self):
@@ -74,7 +73,7 @@ class AssistantOrchestrator:
                     loop.run_until_complete(self.process_audio_command(audio_bytes))
 
     async def process_audio_command(self, audio_bytes: bytes):
-        """Pipeline: Transcribe Audio -> Hybrid Intent / AI -> Execution -> TTS."""
+        """Pipeline: Fast Transcribe -> Immediate Execution -> Concurrent TTS."""
         if not audio_bytes or self._emergency_stop_requested:
             self.set_state(AssistantState.IDLE)
             return
@@ -90,7 +89,7 @@ class AssistantOrchestrator:
             logger.info(f"User Command: '{user_text}'")
             event_bus.publish("user_message", user_text)
             
-            # Step 2: Run through hybrid processor
+            # Step 2: Run through turbo hybrid processor
             await self.process_text_command(user_text)
 
         except Exception as e:
@@ -100,45 +99,39 @@ class AssistantOrchestrator:
             self.set_state(AssistantState.IDLE)
 
     async def process_text_command(self, user_text: str):
-        """Processes a text command via Fast Offline Local Routing, Custom Routines, or Online LLM."""
-        self.set_state(AssistantState.THINKING)
+        """Processes a text command with concurrent tool dispatch and instant response."""
         self.conversation.add_user_message(user_text)
 
-        # 1. FAST LOCAL OFFLINE ROUTING & ROUTINES
+        # 1. TURBO PARALLEL LOCAL DISPATCH: Check for direct PC action or routine
         local_match = LocalIntentRouter.match_local_command(user_text)
         if local_match:
             tool_name, args, spoken_preamble = local_match
             self.set_state(AssistantState.EXECUTING)
 
+            # Fire Tool Execution and TTS concurrently for zero perceptible lag!
             if tool_name == "execute_routine":
-                logger.info("Executing custom multi-step routine...")
-                resp_text = await routine_manager.execute_routine(args["routine"])
+                logger.info("Turbo Dispatch: Executing routine concurrently...")
+                exec_task = asyncio.create_task(routine_manager.execute_routine(args["routine"]))
+                speak_task = asyncio.create_task(self._speak_safely(spoken_preamble))
+                await asyncio.gather(exec_task, speak_task)
             else:
-                logger.info(f"Fast Local Offline Execution: {tool_name} with {args}")
-                try:
-                    result = await tool_registry.execute(tool_name, args)
-                    resp_text = result.get("message", spoken_preamble)
-                except Exception as err:
-                    resp_text = f"Failed to execute {tool_name}: {str(err)}"
-
-            if not self._emergency_stop_requested:
-                self.set_state(AssistantState.SPEAKING)
-                event_bus.publish("assistant_message", resp_text)
-                await self.tts.speak(resp_text)
+                logger.info(f"Turbo Dispatch: Launching {tool_name} immediately in parallel!")
+                exec_task = asyncio.create_task(tool_registry.execute(tool_name, args))
+                speak_task = asyncio.create_task(self._speak_safely(spoken_preamble))
+                await asyncio.gather(exec_task, speak_task)
 
             self.set_state(AssistantState.IDLE)
             return
 
-        # 2. ONLINE / LLM REASONING & GENERAL CHAT
+        # 2. ONLINE / LLM REASONING (Fallback)
+        self.set_state(AssistantState.THINKING)
         tools = tool_registry.to_openai_tools()
         try:
             response = await self.ai.chat(messages=self.conversation.get_messages(), tools=tools)
         except Exception as e:
-            logger.error(f"AI Provider error (may be offline): {e}")
-            resp_text = "I couldn't reach the online AI service. You can still use local PC commands or routines like 'setup my workspace'."
-            self.set_state(AssistantState.SPEAKING)
-            event_bus.publish("assistant_message", resp_text)
-            await self.tts.speak(resp_text)
+            logger.error(f"AI Provider error (offline fallback): {e}")
+            resp_text = "I am ready for your offline PC commands or routines."
+            await self._speak_safely(resp_text)
             self.set_state(AssistantState.IDLE)
             return
 
@@ -146,7 +139,6 @@ class AssistantOrchestrator:
             self.set_state(AssistantState.IDLE)
             return
 
-        # Check for tool execution
         tool_calls = response.get("tool_calls", [])
         if tool_calls:
             self.set_state(AssistantState.EXECUTING)
@@ -161,10 +153,8 @@ class AssistantOrchestrator:
                 tool_def = tool_registry.get_tool(tool_name)
                 risk_level = tool_def.risk_level if tool_def else 0
 
-                # Security check
                 if self.security.requires_confirmation(tool_name, risk_level):
-                    logger.warning(f"Tool {tool_name} requires confirmation.")
-                    result = {"status": "cancelled", "message": f"Action {tool_name} requires explicit user confirmation."}
+                    result = {"status": "cancelled", "message": f"Action {tool_name} requires confirmation."}
                 else:
                     try:
                         result = await tool_registry.execute(tool_name, args)
@@ -173,16 +163,18 @@ class AssistantOrchestrator:
 
                 self.conversation.add_tool_result(tool_call_id=call_id, name=tool_name, result=result)
 
-            # Get final conversational summary from AI after tool results
             final_resp = await self.ai.chat(messages=self.conversation.get_messages(), tools=None)
             content = final_resp.get("content", "Done.")
         else:
             content = response.get("content", "")
 
-        # Step 3: Speak response
         if content and not self._emergency_stop_requested:
-            self.set_state(AssistantState.SPEAKING)
-            event_bus.publish("assistant_message", content)
-            await self.tts.speak(content)
+            await self._speak_safely(content)
 
         self.set_state(AssistantState.IDLE)
+
+    async def _speak_safely(self, text: str):
+        if not self._emergency_stop_requested:
+            self.set_state(AssistantState.SPEAKING)
+            event_bus.publish("assistant_message", text)
+            await self.tts.speak(text)

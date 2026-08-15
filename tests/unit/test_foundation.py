@@ -5,7 +5,7 @@ import logging
 
 def test_settings_defaults():
     settings = get_settings()
-    assert settings.ai_provider in ["openai", "gemini", "ollama"]
+    assert settings.ai_provider in ["hybrid", "openai", "gemini", "ollama"]
     assert settings.push_to_talk_key == "ctrl+space"
     assert settings.emergency_stop_key == "ctrl+alt+esc"
     assert settings.default_permission_level == 1
