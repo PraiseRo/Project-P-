@@ -1,0 +1,28 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environment & Secrets (NEVER COMMIT SECRETS)
+.env
+.env.local
+*.key
+*.pem
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Audio/Temporary artifacts
+temp_recordings/
+*.wav
+*.mp3
+*.png
+
+# Packaging & Distribution builds
+build/
+dist/
+*.egg-info/
+*.spec

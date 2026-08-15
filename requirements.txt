@@ -1,0 +1,30 @@
+# Core & Configuration
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# Audio & Voice Processing
+sounddevice>=0.4.6
+numpy>=1.24.0
+scipy>=1.10.0
+pynput>=1.7.6
+edge-tts>=6.1.9
+pyttsx3>=2.90
+
+# AI & APIs
+openai>=1.30.0
+google-genai>=0.1.0
+
+# OS Automation & System
+pyautogui>=0.9.54
+pywin32>=306; sys_platform == 'win32'
+psutil>=5.9.0
+pillow>=10.0.0
+
+# Desktop UI
+customtkinter>=5.2.0
+pystray>=0.19.5
+
+# Testing & Dev
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
