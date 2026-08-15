@@ -12,15 +12,15 @@ class Settings(BaseSettings):
     )
 
     # AI Configuration
-    ai_provider: str = Field(default="openai", description="AI Provider: openai, gemini, or ollama")
+    ai_provider: str = Field(default="hybrid", description="AI Provider: hybrid, openai, gemini, or ollama")
     ai_model: str = Field(default="gpt-4o-mini", description="Model name to use")
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API Key")
     gemini_api_key: Optional[str] = Field(default=None, description="Gemini API Key")
     ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama server endpoint")
 
-    # Speech-to-Text (STT) Configuration
-    stt_provider: str = Field(default="openai_whisper", description="STT Provider: openai_whisper or faster_whisper")
-    stt_model: str = Field(default="whisper-1", description="STT model identifier")
+    # Speech-to-Text (STT) Configuration (Default to free, unlimited STT)
+    stt_provider: str = Field(default="free", description="STT Provider: free (built-in zero-quota), openai_whisper")
+    stt_model: str = Field(default="default", description="STT model identifier")
     stt_language: str = Field(default="en", description="Default transcription language")
 
     # Text-to-Speech (TTS) Configuration
