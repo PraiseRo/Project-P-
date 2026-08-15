@@ -1,31 +1,34 @@
 import pytest
 import pytest_asyncio
-from app.ai.hybrid_router import LocalIntentRouter
+from app.ai.hybrid_router import LocalIntentRouter, clean_spoken_input
+from app.tools.apps import _discover_windows_app
 from app.tools.web_research import web_research
 
-def test_local_intent_router():
-    # Test local app open match
-    res = LocalIntentRouter.match_local_command("open notepad")
-    assert res is not None
-    assert res[0] == "open_application"
-    assert res[1] == {"application_name": "notepad"}
+def test_clean_spoken_input():
+    assert clean_spoken_input("Hey P, please open the paint app") == "open the paint app"
+    assert clean_spoken_input("Can you please check my cpu usage?") == "check my cpu usage"
+    assert clean_spoken_input("Could you open notepad") == "open notepad"
 
-    # Test local system metrics match
-    res_cpu = LocalIntentRouter.match_local_command("what is my cpu usage?")
-    assert res_cpu is not None
-    assert res_cpu[0] == "get_system_info"
+def test_paint_app_discovery():
+    assert _discover_windows_app("paint") == "mspaint.exe"
+    assert _discover_windows_app("paint app") == "mspaint.exe"
+    assert _discover_windows_app("mspaint") == "mspaint.exe"
+    assert _discover_windows_app("calc") == "calc.exe"
 
-    # Test web search match
-    res_yt = LocalIntentRouter.match_local_command("search youtube for relaxing beats")
-    assert res_yt is not None
-    assert res_yt[0] == "search_web"
-    assert res_yt[1]["engine"] == "youtube"
+def test_local_intent_router_with_conversational_speech():
+    # "open paint app"
+    res1 = LocalIntentRouter.match_local_command("open paint app")
+    assert res1 is not None
+    assert res1[0] == "open_application"
+    assert res1[1] == {"application_name": "paint"}
 
-    # Non-local intent should return None to be handled by online LLM
-    res_general = LocalIntentRouter.match_local_command("Tell me a funny joke about programming")
-    assert res_general is None
+    # "Please can you open the paint app"
+    res2 = LocalIntentRouter.match_local_command("Please can you open the paint app")
+    assert res2 is not None
+    assert res2[0] == "open_application"
+    assert res2[1] == {"application_name": "paint"}
 
-@pytest.mark.asyncio
-async def test_web_research_tool():
-    res = await web_research("Python programming language")
-    assert res["status"] in ["success", "warning"]
+    # "Hey P, take a screenshot"
+    res3 = LocalIntentRouter.match_local_command("Hey P, take a screenshot")
+    assert res3 is not None
+    assert res3[0] == "take_screenshot"

@@ -8,7 +8,7 @@ from app.core.logging_config import setup_logger
 logger = setup_logger("assistant.microphone")
 
 class MicrophoneManager:
-    """Manages audio recording devices, recording streams, and audio buffer generation."""
+    """Manages audio recording devices, recording streams, volume boost, and audio buffer generation."""
 
     def __init__(self, sample_rate: int = 16000, channels: int = 1):
         self.sample_rate = sample_rate
@@ -69,7 +69,7 @@ class MicrophoneManager:
             raise
 
     def stop_recording(self) -> bytes:
-        """Stops capturing audio and returns a WAV-encoded byte buffer."""
+        """Stops capturing audio, applies Automatic Gain Control (AGC) for low voices, and returns a WAV buffer."""
         if not self._is_recording:
             return b""
         
@@ -88,6 +88,18 @@ class MicrophoneManager:
 
         # Concatenate audio data into a single continuous numpy array
         audio_data = np.concatenate(self._recorded_frames, axis=0)
+
+        # Automatic Gain Control (AGC) & Volume Normalization for low / quiet voices
+        audio_float = audio_data.astype(np.float32)
+        max_amplitude = np.max(np.abs(audio_float))
+        
+        if max_amplitude > 0:
+            target_peak = 26000.0  # Max 16-bit is ~32767
+            gain = min(target_peak / max_amplitude, 6.0) # Up to 6x amplification for quiet voices
+            if gain > 1.2:
+                logger.info(f"Boosting low-volume voice by {gain:.2f}x gain factor.")
+                audio_float = audio_float * gain
+                audio_data = np.clip(audio_float, -32767, 32767).astype(np.int16)
         
         # Write to in-memory WAV buffer
         wav_buffer = io.BytesIO()
@@ -98,7 +110,7 @@ class MicrophoneManager:
             wf.writeframes(audio_data.tobytes())
 
         wav_bytes = wav_buffer.getvalue()
-        logger.info(f"Recording stopped. Total audio bytes captured: {len(wav_bytes)}")
+        logger.info(f"Recording stopped. Processed audio bytes: {len(wav_bytes)}")
         return wav_bytes
 
     @property
