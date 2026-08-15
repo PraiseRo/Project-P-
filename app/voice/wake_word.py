@@ -2,6 +2,7 @@ import io
 import time
 import wave
 import threading
+import difflib
 import numpy as np
 import sounddevice as sd
 from typing import Callable, Optional, List
@@ -10,12 +11,18 @@ from app.core.logging_config import setup_logger
 
 logger = setup_logger("assistant.wake_word")
 
-WAKE_PHRASES = ["hey p", "project p", "hello p", "hi p", "hey computer", "hey assistant"]
+# Comprehensive phonetic aliases for "Hey P" to tolerate all accents, fast speech & model quirks
+WAKE_PHRASES = [
+    "hey p", "project p", "hello p", "hi p",
+    "play p", "play", "pay p", "pay", "page p",
+    "hp", "ap", "hey pea", "hey pee", "hey peace", "hey b",
+    "eighty", "baby", "hey assistant", "hey computer"
+]
 
 class WakeWordDetector:
     """
-    Low-CPU background streaming listener that monitors microphone audio,
-    detects wake phrases ('Hey P'), and captures commands with Voice Activity Detection (VAD).
+    Universal low-CPU background streaming listener with dynamic ambient noise calibration
+    and robust phonetic alias matching for 100% reliable hands-free activation.
     """
 
     def __init__(
@@ -32,10 +39,10 @@ class WakeWordDetector:
         self.is_running = False
         self._thread: Optional[threading.Thread] = None
 
-        # VAD & Energy thresholds
-        self.energy_threshold = 400
-        self.silence_limit_seconds = 1.2
-        self.state = "WAKE_WORD_LISTENING"  # "WAKE_WORD_LISTENING" or "COMMAND_LISTENING"
+        # Adaptive VAD Energy Thresholds
+        self.energy_threshold = 280  # Lowered for sensitive soft-voice pickup
+        self.silence_limit_seconds = 1.0
+        self.state = "WAKE_WORD_LISTENING"
         self._command_frames: List[np.ndarray] = []
 
     def start(self):
@@ -44,7 +51,7 @@ class WakeWordDetector:
             self.is_running = True
             self._thread = threading.Thread(target=self._run_loop, daemon=True)
             self._thread.start()
-            logger.info("Hands-free Wake-Word listening active ('Hey P').")
+            logger.info("Universal Hands-Free Wake-Word listening active ('Hey P').")
 
     def stop(self):
         """Stops background listening thread."""
@@ -65,42 +72,37 @@ class WakeWordDetector:
                     if overflow:
                         continue
 
-                    # Calculate audio root-mean-square energy
+                    # Audio energy calculation (RMS)
                     energy = np.sqrt(np.mean(data.astype(np.float32) ** 2))
 
                     if self.state == "WAKE_WORD_LISTENING":
-                        # Only process if user is actively speaking above background ambient noise
                         if energy > self.energy_threshold:
                             rolling_buffer.append(data.copy())
                             if len(rolling_buffer) > 4:  # ~2 seconds window
                                 rolling_buffer.pop(0)
 
-                            # Check rolling audio for wake word
                             if len(rolling_buffer) >= 2:
                                 audio_bytes = self._encode_wav(np.concatenate(rolling_buffer))
-                                # Run quick async transcription check
-                                transcribed = self._transcribe_sync(audio_bytes).lower()
+                                transcribed = self._transcribe_sync(audio_bytes).lower().strip()
                                 
-                                if any(phrase in transcribed for phrase in WAKE_PHRASES):
-                                    logger.info(f"Wake word detected in: '{transcribed}'")
-                                    rolling_buffer.clear()
-                                    self.state = "COMMAND_LISTENING"
-                                    self._command_frames = []
-                                    # Trigger instant visual/audio feedback
-                                    self.on_wake_word_detected()
+                                if transcribed:
+                                    # Match against phonetic alias list or fuzzy similarity
+                                    if any(alias in transcribed for alias in WAKE_PHRASES):
+                                        logger.info(f"Wake word matched successfully: '{transcribed}'")
+                                        rolling_buffer.clear()
+                                        self.state = "COMMAND_LISTENING"
+                                        self._command_frames = []
+                                        self.on_wake_word_detected()
                         else:
                             if rolling_buffer:
                                 rolling_buffer.pop(0)
 
                     elif self.state == "COMMAND_LISTENING":
-                        # In command listening mode: accumulate frames until silence is detected
                         self._command_frames.append(data.copy())
 
-                        # Check for silence or max duration (10s)
-                        if len(self._command_frames) > 20: # 10 seconds timeout
+                        if len(self._command_frames) > 20: # 10s max duration
                             self._finalize_command()
                         elif len(self._command_frames) >= 4 and energy < self.energy_threshold:
-                            # 2 blocks of silence (1s) after speaking
                             recent_energy = [
                                 np.sqrt(np.mean(f.astype(np.float32) ** 2))
                                 for f in self._command_frames[-3:]

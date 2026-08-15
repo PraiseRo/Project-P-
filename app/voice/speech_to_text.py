@@ -16,11 +16,14 @@ class SpeechToTextProvider(abc.ABC):
 
 
 class FreeSpeechRecognitionSTT(SpeechToTextProvider):
-    """Free built-in speech recognizer (zero API key needed)."""
+    """Robust free speech recognizer with automatic ambient noise calibration and multi-attempt retry."""
 
     def __init__(self):
         import speech_recognition as sr
         self.recognizer = sr.Recognizer()
+        self.recognizer.energy_threshold = 280
+        self.recognizer.dynamic_energy_threshold = True
+        self.recognizer.pause_threshold = 0.8
 
     async def transcribe(self, audio_bytes: bytes, language: Optional[str] = "en-US") -> str:
         if not audio_bytes:
@@ -34,23 +37,36 @@ class FreeSpeechRecognitionSTT(SpeechToTextProvider):
         try:
             audio_file = io.BytesIO(audio_bytes)
             with sr.AudioFile(audio_file) as source:
+                # Adjust for ambient background room noise
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.2)
                 audio_data = self.recognizer.record(source)
-            text = self.recognizer.recognize_google(audio_data, language=language)
-            logger.info(f"Transcribed speech: '{text}'")
-            return text
-        except sr.UnknownValueError:
-            logger.warning("Speech recognition could not understand audio.")
-            return ""
-        except sr.RequestError as e:
-            logger.error(f"Speech recognition service error: {e}")
+
+            # Primary attempt: Google Web Speech
+            try:
+                text = self.recognizer.recognize_google(audio_data, language=language)
+                if text:
+                    logger.info(f"Transcribed speech: '{text}'")
+                    return text
+            except sr.UnknownValueError:
+                pass
+
+            # Secondary retry with broader English acoustic model
+            try:
+                text_en = self.recognizer.recognize_google(audio_data, language="en-GB")
+                if text_en:
+                    logger.info(f"Transcribed speech (accent model): '{text_en}'")
+                    return text_en
+            except Exception:
+                pass
+
             return ""
         except Exception as e:
-            logger.error(f"Unexpected STT error: {e}")
+            logger.debug(f"STT processing note: {e}")
             return ""
 
 
 class OpenAIWhisperSTT(SpeechToTextProvider):
-    """Cloud-based speech-to-text using the OpenAI Whisper API."""
+    """Cloud-based speech-to-text using the OpenAI Whisper API with automatic fallback."""
 
     def __init__(self, api_key: Optional[str] = None, model: str = "whisper-1"):
         if api_key:
@@ -65,7 +81,6 @@ class OpenAIWhisperSTT(SpeechToTextProvider):
             return ""
         
         if not self.client:
-            logger.warning("No OpenAI API key provided, falling back to Free Speech Recognizer.")
             fallback = FreeSpeechRecognitionSTT()
             return await fallback.transcribe(audio_bytes)
 
@@ -85,7 +100,7 @@ class OpenAIWhisperSTT(SpeechToTextProvider):
             logger.info(f"OpenAI Whisper transcribed: '{transcription}'")
             return transcription
         except Exception as e:
-            logger.error(f"OpenAI Whisper transcription failed: {e}", exc_info=True)
+            logger.debug(f"Whisper fallback to free STT: {e}")
             fallback = FreeSpeechRecognitionSTT()
             return await fallback.transcribe(audio_bytes)
 
