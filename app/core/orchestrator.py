@@ -1,3 +1,4 @@
+import random
 import asyncio
 from typing import Optional, Dict, Any
 from app.core.events import AssistantState, event_bus
@@ -10,13 +11,21 @@ from app.voice.speech_to_text import SpeechToTextProvider
 from app.voice.text_to_speech import TextToSpeechProvider
 from app.voice.microphone import MicrophoneManager
 from app.voice.hotkey import PushToTalkListener
+from app.voice.wake_word import WakeWordDetector
 from app.tools.registry import tool_registry
 from app.security.policies import SecurityPolicy
 
 logger = setup_logger("assistant.orchestrator")
 
+GREETING_RESPONSES = [
+    "Yes, Praise?",
+    "Hello, how can I help you?",
+    "I'm listening.",
+    "Ready for your command, Praise."
+]
+
 class AssistantOrchestrator:
-    """Master orchestrator with Turbo Parallel Execution and Zero-Lag Audio Dispatch."""
+    """Master orchestrator with Hands-Free Wake-Word ('Hey P'), Push-to-Talk, and Turbo Hybrid Routing."""
 
     def __init__(
         self,
@@ -37,10 +46,18 @@ class AssistantOrchestrator:
         self._emergency_stop_requested = False
         self.async_loop = async_loop
 
+        # 1. Global Push-to-Talk & Emergency Stop Listener
         self.hotkey_listener = PushToTalkListener(
             on_press_callback=self._on_push_to_talk_pressed,
             on_release_callback=self._on_push_to_talk_released,
             on_emergency_stop=self.trigger_emergency_stop
+        )
+
+        # 2. Hands-Free Wake-Word Detector ('Hey P')
+        self.wake_detector = WakeWordDetector(
+            stt_provider=self.stt,
+            on_wake_word_detected=self._on_wake_word_triggered,
+            on_command_recorded=self._on_wake_command_captured
         )
 
     def set_state(self, new_state: AssistantState):
@@ -54,6 +71,19 @@ class AssistantOrchestrator:
         self.set_state(AssistantState.IDLE)
         event_bus.publish("emergency_stop", True)
 
+    def _on_wake_word_triggered(self):
+        """Executed immediately when 'Hey P' is detected hands-free."""
+        logger.info("Wake Word 'Hey P' Triggered!")
+        self.set_state(AssistantState.LISTENING)
+        greeting = random.choice(GREETING_RESPONSES)
+        if self.async_loop and self.async_loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._speak_safely(greeting), self.async_loop)
+
+    def _on_wake_command_captured(self, audio_bytes: bytes):
+        """Executed when user finishes speaking after the wake-word greeting."""
+        if self.async_loop and self.async_loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.process_audio_command(audio_bytes), self.async_loop)
+
     def _on_push_to_talk_pressed(self):
         if self.state == AssistantState.IDLE:
             self._emergency_stop_requested = False
@@ -65,12 +95,6 @@ class AssistantOrchestrator:
             audio_bytes = self.mic.stop_recording()
             if self.async_loop and self.async_loop.is_running():
                 asyncio.run_coroutine_threadsafe(self.process_audio_command(audio_bytes), self.async_loop)
-            else:
-                try:
-                    asyncio.create_task(self.process_audio_command(audio_bytes))
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(self.process_audio_command(audio_bytes))
 
     async def process_audio_command(self, audio_bytes: bytes):
         """Pipeline: Fast Transcribe -> Immediate Execution -> Concurrent TTS."""
@@ -80,7 +104,6 @@ class AssistantOrchestrator:
 
         try:
             self.set_state(AssistantState.THINKING)
-            # Step 1: Transcribe user speech
             user_text = await self.stt.transcribe(audio_bytes)
             if not user_text:
                 self.set_state(AssistantState.IDLE)
@@ -89,7 +112,6 @@ class AssistantOrchestrator:
             logger.info(f"User Command: '{user_text}'")
             event_bus.publish("user_message", user_text)
             
-            # Step 2: Run through turbo hybrid processor
             await self.process_text_command(user_text)
 
         except Exception as e:
@@ -108,7 +130,6 @@ class AssistantOrchestrator:
             tool_name, args, spoken_preamble = local_match
             self.set_state(AssistantState.EXECUTING)
 
-            # Fire Tool Execution and TTS concurrently for zero perceptible lag!
             if tool_name == "execute_routine":
                 logger.info("Turbo Dispatch: Executing routine concurrently...")
                 exec_task = asyncio.create_task(routine_manager.execute_routine(args["routine"]))

@@ -18,7 +18,7 @@ logger = setup_logger("assistant.main")
 
 def main():
     settings = get_settings()
-    logger.info("Initializing Local Voice-Controlled AI Desktop Assistant...")
+    logger.info("Initializing Project P Voice-Controlled AI Desktop Operator...")
 
     # 1. Initialize Async Event Loop on a Background Worker Thread
     async_loop = asyncio.new_event_loop()
@@ -60,25 +60,27 @@ def main():
         async_loop=async_loop
     )
 
-    # Start Global Push-to-Talk Hotkey Listener (Ctrl + Space)
+    # 4. Start Hotkey & Hands-Free Wake-Word Detector ('Hey P')
     orchestrator.hotkey_listener.start()
+    orchestrator.wake_detector.start()
 
-    # 4. Text Submission Handler for UI Input
+    # 5. Text Submission Handler for UI Input
     def on_text_submit(text: str):
         asyncio.run_coroutine_threadsafe(orchestrator.process_text_command(text), async_loop)
 
-    # 5. Launch Desktop UI Overlay HUD (Main GUI Thread)
+    # 6. Launch Desktop UI Overlay HUD (Main GUI Thread)
     app_ui = AssistantOverlay(on_text_submit=on_text_submit)
-    logger.info("Desktop Assistant HUD started. Ready for voice and keyboard input.")
+    logger.info("Project P is live! Speak 'Hey P' hands-free or hold Ctrl+Space.")
 
     try:
         app_ui.mainloop()
     except KeyboardInterrupt:
-        logger.info("Stopping assistant...")
+        logger.info("Stopping Project P...")
     finally:
+        orchestrator.wake_detector.stop()
         orchestrator.hotkey_listener.stop()
         async_loop.call_soon_threadsafe(async_loop.stop)
-        logger.info("Assistant terminated cleanly.")
+        logger.info("Project P terminated cleanly.")
 
 if __name__ == "__main__":
     main()
